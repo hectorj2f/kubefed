@@ -50,7 +50,8 @@ prereqs:
 3. `./scripts/create-gh-release.sh <RELEASE_TAG>`
     - This step creates a pull request with the release `RELEASE_TAG` changes
       and creates a GitHub draft release. It outputs the URLs for each at the
-      end of the script execution for manual merging and publishing when ready.
+      end of the script execution for manual merging.
+4. Once the pull request is merged, **publish the `draft` release** when ready.
 
 ### Manual
 
