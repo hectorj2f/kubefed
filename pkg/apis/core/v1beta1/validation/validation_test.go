@@ -303,6 +303,8 @@ func federatedTypeConfig(apiResource *metav1.APIResource) *v1beta1.FederatedType
 	pluralName := apiResource.Name
 	statusCollection := v1beta1.StatusCollectionEnabled
 	statusController := v1beta1.ControllerStatusNotRunning
+
+	// TODO (hectorj2f): To remove or to mark as deprecated when using the new status model
 	ftc.Spec.StatusType = &v1beta1.APIResource{
 		Group:      options.DefaultFederatedGroup,
 		Version:    options.DefaultFederatedVersion,

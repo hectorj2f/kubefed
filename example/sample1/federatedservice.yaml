@@ -14,5 +14,4 @@ spec:
           port: 80
   placement:
     clusters:
-    - name: cluster2
-    - name: cluster1
+    - name: self

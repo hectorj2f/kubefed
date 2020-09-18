@@ -25,14 +25,15 @@ controllermanager:
     SchedulerPreferences:
     CrossClusterServiceDiscovery:
     FederatedIngress:
-  
+    RawResourceStatusCollection:
+
   controller:
     annotations: {}
     replicaCount: 2
     repository: quay.io/kubernetes-multicluster
     image: kubefed
     tag: canary
-    imagePullPolicy: IfNotPresent
+    imagePullPolicy: Always
     logLevel: 2
     forceRedeployment: false
     env: {}
@@ -48,7 +49,7 @@ controllermanager:
     repository: quay.io/kubernetes-multicluster
     image: kubefed
     tag: canary
-    imagePullPolicy: IfNotPresent
+    imagePullPolicy: Always
     logLevel: 8
     forceRedeployment: false
     env: {}

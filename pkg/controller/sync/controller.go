@@ -200,7 +200,7 @@ func (s *KubeFedSyncController) Run(stopChan <-chan struct{}) {
 // synced with the corresponding api server.
 func (s *KubeFedSyncController) isSynced() bool {
 	if !s.informer.ClustersSynced() {
-		klog.V(2).Infof("Cluster list not synced")
+		klog.Infof("Cluster list not synced")
 		return false
 	}
 	if !s.fedAccessor.HasSynced() {
@@ -288,18 +288,18 @@ func (s *KubeFedSyncController) syncToClusters(fedResource FederatedResource) ut
 	clusters, err := s.informer.GetClusters()
 	if err != nil {
 		fedResource.RecordError(string(status.ClusterRetrievalFailed), errors.Wrap(err, "Failed to retrieve list of clusters"))
-		return s.setFederatedStatus(fedResource, status.ClusterRetrievalFailed, nil)
+		return s.setFederatedStatus(fedResource, status.ClusterRetrievalFailed, nil, nil)
 	}
 
 	selectedClusterNames, err := fedResource.ComputePlacement(clusters)
 	if err != nil {
 		fedResource.RecordError(string(status.ComputePlacementFailed), errors.Wrap(err, "Failed to compute placement"))
-		return s.setFederatedStatus(fedResource, status.ComputePlacementFailed, nil)
+		return s.setFederatedStatus(fedResource, status.ComputePlacementFailed, nil, nil)
 	}
 
 	kind := fedResource.TargetKind()
 	key := fedResource.TargetName().String()
-	klog.V(4).Infof("Ensuring %s %q in clusters: %s", kind, key, strings.Join(selectedClusterNames.List(), ","))
+	klog.Infof("Ensuring %s %q in clusters: %s", kind, key, strings.Join(selectedClusterNames.List(), ","))
 
 	dispatcher := dispatch.NewManagedDispatcher(s.informer.GetClientForCluster, fedResource, s.skipAdoptingResources)
 
@@ -337,13 +337,14 @@ func (s *KubeFedSyncController) syncToClusters(fedResource FederatedResource) ut
 			}
 			if clusterObj.GetDeletionTimestamp() != nil {
 				// Resource is marked for deletion
-				dispatcher.RecordStatus(clusterName, status.WaitingForRemoval)
+				dispatcher.RecordStatus(clusterName, status.WaitingForRemoval, clusterObj.Object[util.StatusField])
 				continue
 			}
 			if fedResource.IsNamespaceInHostCluster(clusterObj) {
 				// Host cluster namespace needs to have the managed
 				// label removed so it won't be cached anymore.
 				dispatcher.RemoveManagedLabel(clusterName, clusterObj)
+				dispatcher.RecordResourceStatus(clusterName, clusterObj.Object[util.StatusField])
 			} else {
 				dispatcher.Delete(clusterName)
 			}
@@ -360,6 +361,7 @@ func (s *KubeFedSyncController) syncToClusters(fedResource FederatedResource) ut
 			dispatcher.Create(clusterName)
 		} else {
 			dispatcher.Update(clusterName, clusterObj)
+			dispatcher.RecordResourceStatus(clusterName, clusterObj.Object[util.StatusField])
 		}
 	}
 	_, timeoutErr := dispatcher.Wait()
@@ -377,14 +379,18 @@ func (s *KubeFedSyncController) syncToClusters(fedResource FederatedResource) ut
 		runtime.HandleError(err)
 	}
 
-	collectedStatus := dispatcher.CollectedStatus()
-	return s.setFederatedStatus(fedResource, status.AggregateSuccess, &collectedStatus)
+	collectedStatus, collectedResourceStatus := dispatcher.CollectedStatus()
+	klog.Infof("Setting the federating status '%v'", collectedResourceStatus)
+	return s.setFederatedStatus(fedResource, status.AggregateSuccess, &collectedStatus, &collectedResourceStatus)
 }
 
 func (s *KubeFedSyncController) setFederatedStatus(fedResource FederatedResource,
-	reason status.AggregateReason, collectedStatus *status.CollectedPropagationStatus) util.ReconciliationStatus {
+	reason status.AggregateReason, collectedStatus *status.CollectedPropagationStatus, collectedResourceStatus *status.CollectedResourceStatus) util.ReconciliationStatus {
 	if collectedStatus == nil {
 		collectedStatus = &status.CollectedPropagationStatus{}
+	}
+	if collectedResourceStatus == nil {
+		collectedResourceStatus = &status.CollectedResourceStatus{}
 	}
 
 	kind := fedResource.FederatedKind()
@@ -405,19 +411,20 @@ func (s *KubeFedSyncController) setFederatedStatus(fedResource FederatedResource
 	// If the underlying resource has changed, attempt to retrieve and
 	// update it repeatedly.
 	err := wait.PollImmediate(1*time.Second, 5*time.Second, func() (bool, error) {
-		if updateRequired, err := status.SetFederatedStatus(obj, reason, *collectedStatus); err != nil {
+		if updateRequired, err := status.SetFederatedStatus(obj, reason, *collectedStatus, *collectedResourceStatus); err != nil {
+			klog.Infof("Failed to set the status for %s %q", kind, name)
 			return false, errors.Wrapf(err, "failed to set the status")
 		} else if !updateRequired {
-			klog.V(4).Infof("No status update necessary for %s %q", kind, name)
+			klog.Infof("No status update necessary for %s %q", kind, name)
 			return true, nil
 		}
-
+		klog.Infof("Updating status of name '%v' and kind '%v'", name, kind)
 		err := s.hostClusterClient.UpdateStatus(context.TODO(), obj)
 		if err == nil {
 			return true, nil
 		}
 		if apierrors.IsConflict(err) {
-			klog.V(2).Infof("Failed to set propagation status for %s %q due to conflict (will retry): %v.", kind, name, err)
+			klog.Infof("Failed to set propagation status for %s %q due to conflict (will retry): %v.", kind, name, err)
 			err := s.hostClusterClient.Get(context.TODO(), obj, obj.GetNamespace(), obj.GetName())
 			if err != nil {
 				return false, errors.Wrapf(err, "failed to retrieve resource")
